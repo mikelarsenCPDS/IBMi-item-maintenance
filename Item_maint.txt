@@ -1,0 +1,126 @@
+**FREE
+ctl-opt option (*srcstmt : *nodebugio : *nounref) nomain;
+ctl-opt Pgminfo(*pcml: *module: *dclcase);
+ctl-opt debug (*input);
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+//  Program : Item_maint
+//  Author  : Mike Larsen
+//  Date Written: 09/08/2018
+//  Purpose : This program will be created as a module and service program
+//            then created as a web service to receive item master
+//            information.  It will read thru the array and write to
+//            db2 table(s)
+//
+// CRTSRVPGM SRVPGM(MIKEL/ITEM_MAINT) MODULE(MIKEL/ITEM_MAINT) EXPORT(*ALL)
+//                     SRCFILE(MIKEL/QRPGLESRC)
+//
+//====================================================================*
+//   Date    Programmer  Description                                  *
+//--------------------------------------------------------------------*
+// 09/08/18  M.Larsen    Original code.                               *
+//                                                                    *
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+
+// - - - -
+// for the item information input parameters
+
+dcl-ds itemInformation_Ds qualified template Dim(1000);
+       inItemNumber      char(20);
+       inItemDescription char(30);
+       inUnitOfMeasure   char(3);
+       inItemClass       char(2);
+end-ds;
+
+// - - - - - - -
+// Workfields
+
+dcl-s x                  zoned(3:0);
+dcl-s sqlStatementStatus char(5);
+
+// used for holding values from the array passed in from the Web service
+
+dcl-s wItemNumber      char(20);
+dcl-s wItemDescription char(30);
+dcl-s wUnitOfMeasure   char(3);
+dcl-s wItemClass       char(2);
+
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// getItemInformation procedure - POST
+//
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+dcl-proc getItemInformation export;
+
+   dcl-pi *n;
+
+     // input
+     inItemInformation Likeds(itemInformation_Ds) dim(1000);
+
+     // output
+     outStatus char(35);
+   end-pi;
+
+   Exec sql
+     Set option commit = *none, closqlcsr = *endmod;
+
+   For x = 1 to 1000 by 1;
+
+     If %trim(inItemInformation(x).inItemNumber) = *Blanks;
+        leave;
+     Endif;
+
+     wItemNumber      = inItemInformation(x).inItemNumber;
+     wItemDescription = inItemInformation(x).inItemDescription;
+     wUnitOfMeasure   = inItemInformation(x).inUnitOfMeasure;
+     wItemClass       = inItemInformation(x).inItemClass;
+
+     // insert/update item master table
+
+     buildItemMaster();
+
+     Exec sql
+       get diagnostics exception 1 :sqlStatementStatus = returned_sqlstate;
+
+     If %subst(sqlStatementStatus:1:2) = '00';
+         outStatus = 'Item successfully processed.';
+     Else;
+         outStatus = 'There was an issue with this item.';
+     Endif;
+
+   Endfor;
+
+   Return;
+
+ End-proc getItemInformation;
+
+ //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ // Sub procedure buildItemMaster
+ //
+ // This sub procedure populates the item master table
+ //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+ dcl-proc buildItemMaster;
+
+    Exec sql
+      Merge into ItemMaster as tgt
+            using (values(:wItemNumber, :wItemDescription, :wUnitOfMeasure,
+                          :wItemClass))
+
+            as src (sItemNumber, sItemDescription, sUnitOfMeasure, sItemClass)
+            on (tgt.itemNumber) = (src.sItemNumber)
+
+          when matched then
+               update set tgt.itemDescription = :wItemDescription,
+                          tgt.unitOfMeasure   = :wUnitOfMeasure,
+                          tgt.itemClass       = :wItemClass
+
+          when not matched then
+               insert (tgt.ItemNumber, tgt.ItemDescription, tgt.UnitOfMeasure,
+                       tgt.ItemClass)
+
+                values(src.sItemNumber, src.sItemDescription,
+                       src.sUnitOfMeasure, src.sItemClass);
+
+ End-proc buildItemMaster;
+
+//- - - - - - - - - - - - - - - - - 
